@@ -1,0 +1,227 @@
+# backend/main.py
+import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+from .routes import painel, sistemas
+from .auth import router as auth_router
+
+# Carrega as variáveis de ambiente do arquivo .env
+load_dotenv()
+
+app = FastAPI(
+    title="Konty API",
+    description="API para centralizar o acesso aos sistemas internos da Kontymax.",
+    version="1.0.0",
+)
+
+# Configuração do CORS para permitir requisições do frontend
+origins = [
+    os.getenv("FRONTEND_URL", "http://localhost:3000"), # URL do seu frontend
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Inclui os roteadores das funcionalidades
+app.include_router(auth_router, prefix="/auth", tags=["Autenticação"])
+app.include_router(painel.router, prefix="/painel", tags=["Painel"])
+app.include_router(sistemas.router, prefix="/sistemas", tags=["Sistemas"])
+
+@app.get("/")
+async def read_root():
+    """
+    Rota raiz para verificar o status da API.
+    """
+    return {"message": "Konty API está online!"}
+
+# backend/auth.py
+import os
+import httpx
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2Bearer
+from jose import jwt, JWTError
+from dotenv import load_dotenv
+
+# Carrega as variáveis de ambiente do arquivo .env
+load_dotenv()
+
+oauth2_scheme = OAuth2Bearer(tokenUrl="token") # Não é usado diretamente para login, mas para documentação Swagger
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    raise ValueError("Variáveis de ambiente SUPABASE_URL e SUPABASE_ANON_KEY devem ser definidas.")
+
+# Cache para a chave pública do Supabase
+_supabase_public_key = None
+
+async def get_supabase_public_key():
+    """
+    Busca a chave pública do Supabase para validação do JWT.
+    Armazena em cache para evitar múltiplas requisições.
+    """
+    global _supabase_public_key
+    if _supabase_public_key:
+        return _supabase_public_key
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+            response.raise_for_status()
+            jwks = response.json()
+            # Supabase usa a primeira chave na lista
+            _supabase_public_key = jwks["keys"][0]
+            return _supabase_public_key
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Não foi possível conectar ao Supabase para obter a chave pública: {exc}"
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao obter a chave pública do Supabase: {exc}"
+        )
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    """
+    Valida o token JWT do Supabase e retorna os dados do usuário.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Credenciais inválidas. Por favor, faça login novamente.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        public_key = await get_supabase_public_key()
+        # Decodifica o token usando a chave pública do Supabase
+        # O algoritmo é geralmente RS256 para tokens JWT do Supabase
+        payload = jwt.decode(token, public_key, algorithms=["RS256"], audience="authenticated", issuer=f"{SUPABASE_URL}/auth/v1")
+        
+        # Verifica se o token tem um subject (sub) que representa o ID do usuário
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        
+        # Você pode adicionar mais validações aqui, como verificar a expiração do token
+        # ou buscar informações adicionais do usuário no seu DB Supabase se necessário.
+        
+        # Retorna um dicionário simples com o ID do usuário e email (se disponível)
+        return {"id": user_id, "email": payload.get("email")}
+    except JWTError:
+        raise credentials_exception
+    except Exception as e:
+        # Captura outras exceções inesperadas durante a validação
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno na validação do token: {e}"
+        )
+
+# backend/routes/painel.py
+from fastapi import APIRouter, Depends
+from ..auth import get_current_user
+
+router = APIRouter()
+
+@router.get("/")
+async def read_painel(current_user: dict = Depends(get_current_user)):
+    """
+    Rota protegida para o painel do usuário.
+    Retorna informações básicas do usuário logado.
+    """
+    return {
+        "message": f"Bem-vindo ao painel, {current_user['email']}!",
+        "user_id": current_user['id'],
+        "user_email": current_user['email'],
+        "acessos_disponiveis": ["cobranca", "relatorios", "financeiro"] # Exemplo de permissões
+    }
+
+# backend/routes/sistemas.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from ..auth import get_current_user
+from ..utils.run_script import run_script
+
+router = APIRouter()
+
+@router.post("/cobranca")
+async def execute_cobranca(current_user: dict = Depends(get_current_user)):
+    """
+    Rota protegida para executar o sistema de cobrança.
+    Mocka a execução do script Python.
+    """
+    # Aqui você pode adicionar lógica para verificar se o usuário tem permissão
+    # para executar este sistema, com base em 'current_user' ou dados do DB.
+    
+    # Exemplo de verificação de permissão (apenas um mock)
+    if "cobranca" not in current_user.get("acessos_disponiveis", ["cobranca", "relatorios", "financeiro"]): # Exemplo de como você obterá os acessos do usuário
+         raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Você não tem permissão para executar o sistema de cobrança."
+        )
+
+    try:
+        # Chama a função mock de execução do script
+        result = await run_script("cobranca")
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao executar o sistema de cobrança: {e}"
+        )
+
+# backend/utils/run_script.py
+import asyncio
+import subprocess
+
+async def run_script(script_name: str):
+    """
+    Função para executar um script Python via subprocess.run().
+    Atualmente, é um mock que simula a execução.
+    
+    No futuro, você substituirá esta função para chamar os scripts reais
+    do seu escritório.
+    Exemplo:
+    process = await asyncio.create_subprocess_exec(
+        "python", f"caminho/para/seus/scripts/{script_name}.py",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    stdout, stderr = await process.communicate()
+    
+    if process.returncode != 0:
+        return {"status": "error", "message": stderr.decode().strip()}
+    else:
+        return {"status": "ok", "message": stdout.decode().strip()}
+    """
+    await asyncio.sleep(2) # Simula um atraso na execução
+    return {"status": "ok", "sistema": f"{script_name} executado com sucesso (mock)!"}
+
+# backend/requirements.txt
+fastapi==0.111.0
+uvicorn==0.30.1
+httpx==0.27.0
+python-jose[cryptography]==3.3.0
+python-dotenv==1.0.1
+
+# backend/.render.yaml
+services:
+  - type: web
+    name: konty-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: SUPABASE_URL
+        sync: false # Defina esta variável no Render
+      - key: SUPABASE_ANON_KEY
+        sync: false # Defina esta variável no Render
+      - key: FRONTEND_URL
+        sync: false # Defina esta variável no Render (ex: https://konty.com.br)
