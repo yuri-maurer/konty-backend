@@ -4,8 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 # Importa os roteadores das funcionalidades
-from .routes import painel, sistemas
-from .auth import router as auth_router # O router de auth não é usado diretamente aqui, mas é bom ter uma referência
+# CORREÇÃO: Usando imports absolutos para evitar o erro "ImportError" no deploy
+from routes import painel, sistemas
+from auth import router as auth_router 
 
 # Carrega as variáveis de ambiente do arquivo .env
 load_dotenv()
