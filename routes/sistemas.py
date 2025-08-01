@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from ..auth import get_current_user # Importa a dependência de autenticação
-from ..utils.run_script import run_script # Importa a função para executar scripts
+# CORREÇÃO: Usando imports absolutos
+from auth import get_current_user 
+from utils.run_script import run_script 
 
 router = APIRouter()
 

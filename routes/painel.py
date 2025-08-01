@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
-from ..auth import get_current_user # Importa a dependência de autenticação
+# CORREÇÃO: Usando import absoluto para a dependência de autenticação
+from auth import get_current_user 
 
 router = APIRouter()
 
