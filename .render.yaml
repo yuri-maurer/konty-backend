@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: konty-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: SUPABASE_URL
+        sync: false # Defina esta variável no painel do Render
+      - key: SUPABASE_ANON_KEY
+        sync: false # Defina esta variável no painel do Render
+      - key: FRONTEND_URL
+        sync: false # Defina esta variável no painel do Render (ex: https://konty.com.br)
