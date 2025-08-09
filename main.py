@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 # Importa os roteadores das funcionalidades
 # CORREÇÃO: Usando imports absolutos para evitar o erro "ImportError" no deploy
 from routes import painel, sistemas
-from auth import router as auth_router 
+from auth import router as auth_router
 
 # Carrega as variáveis de ambiente do arquivo .env
 load_dotenv()
@@ -17,12 +17,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Configuração do CORS (Cross-Origin Resource Sharing) para permitir requisições do frontend
-# A URL do frontend é lida da variável de ambiente FRONTEND_URL
-origins = [
-    os.getenv("FRONTEND_URL", "http://localhost:3000"),  # URL do seu frontend (padrão para desenvolvimento local)
-    "https://konty.com.br",  # Domínio sem www para evitar erro de CORS
-]
+# -------------------------
+# CORS dinâmico por ambiente
+# -------------------------
+# Lê ALLOWED_ORIGINS (separados por vírgula). Se não existir, cai no FRONTEND_URL (ou localhost)
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+if allowed_origins_env:
+    origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+else:
+    origins = [os.getenv("FRONTEND_URL", "http://localhost:3000")]
 
 app.add_middleware(
     CORSMiddleware,
