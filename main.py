@@ -20,7 +20,8 @@ app = FastAPI(
 # Configuração do CORS (Cross-Origin Resource Sharing) para permitir requisições do frontend
 # A URL do frontend é lida da variável de ambiente FRONTEND_URL
 origins = [
-    os.getenv("FRONTEND_URL", "http://localhost:3000"), # URL do seu frontend (padrão para desenvolvimento local)
+    os.getenv("FRONTEND_URL", "http://localhost:3000"),  # URL do seu frontend (padrão para desenvolvimento local)
+    "https://konty.com.br",  # Domínio sem www para evitar erro de CORS
 ]
 
 app.add_middleware(
