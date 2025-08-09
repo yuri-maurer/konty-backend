@@ -16,7 +16,6 @@ load_dotenv()
 # -------------------------
 # Configuração básica de logs
 # -------------------------
-# Formato: 2025-08-09T12:34:56Z level msg
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -33,7 +32,6 @@ app = FastAPI(
 # -------------------------
 # CORS dinâmico por ambiente
 # -------------------------
-# Lê ALLOWED_ORIGINS (separados por vírgula). Se não existir, cai no FRONTEND_URL (ou localhost)
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
 if allowed_origins_env:
     origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
@@ -42,10 +40,10 @@ else:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,        # Permite requisições da(s) URL(s) definida(s)
-    allow_credentials=True,       # Permite cookies de credenciais (se usados)
-    allow_methods=["*"],          # Permite todos os métodos HTTP (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],          # Permite todos os cabeçalhos HTTP
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # -------------------------
@@ -55,12 +53,9 @@ app.add_middleware(
 async def log_requests(request: Request, call_next):
     start = time.perf_counter()
     rid = str(uuid.uuid4())
-    # Anexa o X-Request-ID na resposta para correlação entre frontend e backend
-    response = None
     try:
         response = await call_next(request)
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
-        # Log enxuto e padronizado
         logger.info(
             "rid=%s method=%s path=%s status=%s duration_ms=%s ua=%s",
             rid,
@@ -70,9 +65,8 @@ async def log_requests(request: Request, call_next):
             duration_ms,
             request.headers.get("user-agent", "-"),
         )
-        if response is not None:
-            response.headers["X-Request-ID"] = rid
-            response.headers["X-Response-Time"] = f"{duration_ms}ms"
+        response.headers["X-Request-ID"] = rid
+        response.headers["X-Response-Time"] = f"{duration_ms}ms"
         return response
     except Exception as exc:
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -80,8 +74,32 @@ async def log_requests(request: Request, call_next):
             "rid=%s method=%s path=%s status=500 duration_ms=%s error=%s",
             rid, request.method, request.url.path, duration_ms, repr(exc)
         )
-        # Relevantar a exceção para FastAPI tratar
         raise
+
+# -------------------------
+# Middleware de segurança (headers)
+# -------------------------
+ENABLE_HSTS = os.getenv("ENABLE_HSTS", "1") == "1"
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+
+    # Headers seguros padrão
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Bloqueia APIs de hardware por padrão
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Isola a página de outras janelas (mitiga ataques de cross-origin)
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+
+    # HSTS apenas em HTTPS
+    if ENABLE_HSTS and request.url.scheme == "https":
+        # 2 anos; aplica a subdomínios (api.konty.com.br). Não usamos 'preload' por segurança.
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+
+    return response
 
 # Rotas
 app.include_router(auth_router, prefix="/auth", tags=["Autenticação"])
