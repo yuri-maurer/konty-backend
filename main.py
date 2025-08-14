@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 # Importa os roteadores das funcionalidades
 from routes import painel, sistemas
 from auth import router as auth_router
+from routes import pdf_processor # 1. IMPORTA A NOSSA NOVA ROTA DE PDF
 
 # Carrega as variáveis de ambiente
 load_dotenv()
@@ -84,27 +85,21 @@ ENABLE_HSTS = os.getenv("ENABLE_HSTS", "1") == "1"
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
-
-    # Headers seguros padrão
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    # Bloqueia APIs de hardware por padrão
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    # Isola a página de outras janelas (mitiga ataques de cross-origin)
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-
-    # HSTS apenas em HTTPS
     if ENABLE_HSTS and request.url.scheme == "https":
-        # 2 anos; aplica a subdomínios (api.konty.com.br). Não usamos 'preload' por segurança.
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
-
     return response
 
 # Rotas
 app.include_router(auth_router, prefix="/auth", tags=["Autenticação"])
 app.include_router(painel.router, prefix="/painel", tags=["Painel"])
 app.include_router(sistemas.router, prefix="/sistemas", tags=["Sistemas"])
+# 2. REGISTA A NOSSA NOVA ROTA DE PDF
+app.include_router(pdf_processor.router, prefix="/modulos", tags=["Módulos"])
 
 @app.get("/")
 async def read_root():
