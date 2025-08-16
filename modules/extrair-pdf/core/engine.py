@@ -7,7 +7,6 @@ from datetime import datetime
 import pdfplumber
 from PyPDF2 import PdfReader, PdfWriter
 from unidecode import unidecode
-from werkzeug.utils import secure_filename
 
 class PdfProcessingError(Exception):
     """Exceção personalizada para erros de processamento de PDF."""
@@ -18,19 +17,19 @@ class PdfProcessingError(Exception):
 # ----------------------
 def extrair_competencia(text: str) -> str:
     """
-    Extrai competência no formato MM.AAAA ou por mês escrito ("Março de 2024") e padroniza para MM.AAAA.
-    Retorna "DataDesconhecida" quando não identifica.
+    Extrai competência no formato MM.AAAA ou por mês escrito ("Março de 2024")
+    e padroniza para MM.AAAA. Retorna "DataDesconhecida" quando não identifica.
     """
-    # MM.AAAA
     match = re.search(r'(0[1-9]|1[0-2])\.(20\d{2})', text)
     if match:
         return match.group(0)
 
-    # "Mês de AAAA" (variações comuns PT-BR)
-    match2 = re.search(r'((?:Jan|Fev|Mar|Abr|Mai|Jun|Jul|Ago|Set|Out|Nov|Dez)[a-z]*|'
-                       r'janeiro|fevereiro|março|abril|maio|junho|julho|agosto|'
-                       r'setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})',
-                       text, flags=re.IGNORECASE)
+    match2 = re.search(
+        r'((?:Jan|Fev|Mar|Abr|Mai|Jun|Jul|Ago|Set|Out|Nov|Dez)[a-z]*|'
+        r'janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|'
+        r'setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})',
+        text, flags=re.IGNORECASE
+    )
     if match2:
         meses_map = {
             'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03', 'abril': '04',
@@ -41,16 +40,13 @@ def extrair_competencia(text: str) -> str:
         }
         mes_txt = match2.group(1).lower()
         ano = match2.group(2)
-        mes_num = meses_map.get(mes_txt[:3], 'XX')  # usa abreviação
+        mes_num = meses_map.get(mes_txt[:3], 'XX')
         return f"{mes_num}.{ano}"
 
     return "DataDesconhecida"
 
 def extrair_codigo_nome_funcionario(text: str):
-    """
-    Extrai 'Código' e 'Nome do Funcionário' quando disponíveis.
-    Retorna ('CodigoDesconhecido','NomeDesconhecido') se não identificar.
-    """
+    """Extrai 'Código' e 'Nome do Funcionário' quando disponíveis."""
     codigo = "CodigoDesconhecido"
     nome = "NomeDesconhecido"
 
@@ -67,10 +63,7 @@ def extrair_codigo_nome_funcionario(text: str):
     return codigo, nome
 
 def extrair_condominio_cnpj(text: str):
-    """
-    Extrai o nome bruto do condomínio (linha antes de CNPJ/CC ou primeira linha)
-    e o CNPJ quando disponível.
-    """
+    """Extrai nome bruto do condomínio (linha antes de CNPJ/CC ou primeira linha) e CNPJ."""
     condominio = "CondominioDesconhecido"
     cnpj = "CNPJDesconhecido"
 
@@ -95,11 +88,12 @@ def extrair_condominio_cnpj(text: str):
 def clean_condominio_name(name: str) -> str:
     """Normaliza o nome do condomínio removendo ruídos e acentos."""
     if not name:
-        return "CONDOMINIO_DESCONHECIDO"
+        return "CONDOMINIO DESCONHECIDO"
     name = re.sub(r'\s*(?:CNPJ:|CC:)\s*.*?(?:Folha Mensal|$)', '', name, flags=re.IGNORECASE).strip()
     name = re.sub(r'Folha Mensal$', '', name, flags=re.IGNORECASE).strip()
     name = re.sub(r'CONDOMINIO\s+EDIFICIO\s+', 'CONDOMINIO ', name, flags=re.IGNORECASE).strip()
     name = re.sub(r'\s+', ' ', name).strip()
+    # Mantém espaços; só remove acentos e padroniza maiúsculas
     return unidecode(name).upper()
 
 # ----------------------
@@ -107,7 +101,7 @@ def clean_condominio_name(name: str) -> str:
 # ----------------------
 def process_pdf_file(pdf_bytes: bytes):
     """
-    Processa o PDF, agrupando por condomínio e gerando um ZIP.
+    Processa o PDF, agrupa por condomínio e gera um ZIP.
     Retorna (zip_buffer: BytesIO, zip_filename: str).
     """
     try:
@@ -115,8 +109,6 @@ def process_pdf_file(pdf_bytes: bytes):
 
         with pdfplumber.open(pdf_file_bytes) as pdf:
             pdf_reader = PdfReader(pdf_file_bytes)
-            total_pages = len(pdf.pages)
-
             condominios_agrupados = {}  # { nome_condominio: {'writer': PdfWriter(), 'competencia': str} }
             competencia_geral = "DataDesconhecida"
 
@@ -138,7 +130,6 @@ def process_pdf_file(pdf_bytes: bytes):
                         'competencia': competencia_str
                     }
 
-                # Adiciona a página ao writer do condomínio
                 condominios_agrupados[nome_condominio_limpo]['writer'].add_page(pdf_reader.pages[i])
 
         # Monta ZIP em memória
@@ -151,7 +142,7 @@ def process_pdf_file(pdf_bytes: bytes):
                 competencia_grupo = data.get('competencia', "DataDesconhecida")
 
                 if competencia_grupo != "DataDesconhecida":
-                    pdf_filename = f"Recibo de Pagamento {competencia_grupo} - {condominio_nome}.pdf"
+                    pdf_filename = f"Recibo de Pagamento {competencia_grupo} - {condominio_nome}.pdf")
                 else:
                     pdf_filename = f"Recibo de Pagamento - {condominio_nome} - {datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
@@ -159,9 +150,9 @@ def process_pdf_file(pdf_bytes: bytes):
                 writer.write(grouped_pdf_buffer)
                 grouped_pdf_buffer.seek(0)
 
-                zf.writestr(secure_filename(pdf_filename), grouped_pdf_buffer.getvalue())
+                # IMPORTANTE: não usar secure_filename — manter espaços e acentos
+                zf.writestr(pdf_filename, grouped_pdf_buffer.getvalue())
 
-        # Define nome do ZIP como no comportamento local
         if competencia_geral != "DataDesconhecida":
             zip_filename = f"Recibos de Pagamento {competencia_geral}.zip"
         else:
