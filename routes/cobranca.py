@@ -1,111 +1,183 @@
-# konty-backend/routes/cobranca.py
-from fastapi import APIRouter, HTTPException, Body, status
-from typing import List, Dict, Any
-from modules.cobranca.core import engine
 
-router = APIRouter(
-    prefix="/cobranca",
-    tags=["Sistema de Cobrança"]
-)
+# cobranca.py
+# Adapter HTTP (FastAPI). Valida entrada/saída e chama engine.py.
+from __future__ import annotations
+from fastapi import APIRouter, Depends, Header, Request, Response, status
+from typing import List, Optional
+import time, uuid
 
-# --- Rotas de Clientes ---
-@router.get("/clients", response_model=List[Dict[str, Any]])
-async def get_clients():
-    return engine.get_all_clients()
+import engine as core
+from schemas import Client, Charge, Log, Settings, RecurringCharge, SyncResult
 
-@router.post("/clients", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def create_client(client_data: Dict[str, Any] = Body(...)):
-    if not all(k in client_data for k in ["name", "phone", "email"]):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nome, telefone e email são obrigatórios.")
-    return engine.add_client(client_data)
+router = APIRouter(prefix="/api", tags=["cobranca"])
 
-@router.put("/clients/{client_id}", response_model=Dict[str, Any])
-async def update_client_route(client_id: str, updated_fields: Dict[str, Any] = Body(...)):
-    updated_client = engine.update_client(client_id, updated_fields)
-    if not updated_client:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente não encontrado")
-    return updated_client
+# --------- Observabilidade mínima (trace_id + duração) ----------
 
-@router.delete("/clients/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_client_route(client_id: str):
-    if not engine.delete_client(client_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente não encontrado")
-    return
+def with_trace(request: Request):
+    trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())
+    start = time.perf_counter()
+    try:
+        yield trace_id
+    finally:
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        # log simples em memória (poderia ir para Supabase futuramente)
+        print({"event": "request_done", "path": request.url.path, "trace_id": trace_id, "duration_ms": duration_ms})
 
-@router.delete("/clients", status_code=status.HTTP_204_NO_CONTENT)
-async def clear_clients_route():
-    engine.clear_all_clients()
-    return
+# -------------------- Clientes --------------------
 
-# --- Rotas de Cobranças Mensais ---
-@router.get("/charges", response_model=List[Dict[str, Any]])
-async def get_charges():
-    return engine.get_all_charges()
+@router.get("/clients", response_model=List[Client])
+def get_clients(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.list_clients()
 
-@router.post("/charges", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def create_charge(charge_data: Dict[str, Any] = Body(...)):
-    return engine.add_charge(charge_data)
+@router.post("/clients", response_model=Client, status_code=status.HTTP_201_CREATED)
+def post_client(payload: Client, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.add_client(payload.model_dump())
 
-@router.put("/charges/{charge_id}", response_model=Dict[str, Any])
-async def update_charge_route(charge_id: str, updated_fields: Dict[str, Any] = Body(...)):
-    updated_charge = engine.update_charge(charge_id, updated_fields)
-    if not updated_charge:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cobrança não encontrada")
-    return updated_charge
+@router.put("/clients/{client_id}", response_model=Client)
+def put_client(client_id: str, payload: Client, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    out = core.update_client(client_id, payload.model_dump(exclude_unset=True))
+    if not out:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"id": client_id, "name": "NOT_FOUND"}
+    return out
 
-@router.delete("/charges/{charge_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_charge_route(charge_id: str):
-    if not engine.delete_charge(charge_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cobrança não encontrada")
-    return
+@router.delete("/clients/{client_id}")
+def delete_client(client_id: str, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    ok = core.delete_client(client_id)
+    return {"deleted": ok}
 
-@router.delete("/charges", status_code=status.HTTP_204_NO_CONTENT)
-async def clear_charges_route():
-    engine.clear_all_charges()
-    return
+@router.delete("/clients")
+def clear_clients(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    core.clear_clients()
+    return {"message": "All clients cleared successfully"}
 
-# --- Rotas de Logs ---
-@router.get("/logs", response_model=List[Dict[str, Any]])
-async def get_logs():
-    return engine.get_all_logs()
+# -------------------- Cobranças --------------------
 
-@router.post("/logs", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-async def create_log(log_data: Dict[str, Any] = Body(...)):
-    return engine.add_log(log_data)
+@router.get("/charges", response_model=List[Charge])
+def get_charges(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.list_charges()
 
-@router.delete("/logs", status_code=status.HTTP_204_NO_CONTENT)
-async def clear_logs_route():
-    engine.clear_all_logs()
-    return
+@router.post("/charges", response_model=Charge, status_code=status.HTTP_201_CREATED)
+def post_charge(payload: Charge, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.add_charge(payload.model_dump())
 
-# --- Rotas de Configurações ---
-@router.get("/settings", response_model=Dict[str, Any])
-async def get_settings_route():
-    return engine.get_settings()
+@router.put("/charges/{charge_id}", response_model=Charge)
+def put_charge(charge_id: str, payload: Charge, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    out = core.update_charge(charge_id, payload.model_dump(exclude_unset=True))
+    if not out:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"id": charge_id, "clientName": "NOT_FOUND"}
+    return out
 
-@router.put("/settings", response_model=Dict[str, Any])
-async def update_settings_route(settings_data: Dict[str, Any] = Body(...)):
-    return engine.update_settings(settings_data)
+@router.delete("/charges/{charge_id}")
+def delete_charge(charge_id: str, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    ok = core.delete_charge(charge_id)
+    return {"deleted": ok}
 
-# --- Rotas de Ações ---
-@router.post("/send_whatsapp", response_model=Dict[str, str])
-async def send_whatsapp_message_route(data: Dict[str, str] = Body(...)):
-    phone = data.get("phoneNumber")
-    message = data.get("messageContent")
-    if not phone or not message:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="phoneNumber e messageContent são obrigatórios.")
-    
-    result = engine.send_whatsapp_message(phone, message)
-    if "Erro" in result.get("status", ""):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.get("message"))
-    return result
+@router.delete("/charges")
+def clear_charges(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    core.clear_charges()
+    return {"message": "All monthly charges cleared successfully"}
 
-@router.post("/sync_charges", response_model=Dict[str, Any])
-async def sync_charges_route():
-    return engine.sync_charges_with_clients()
+# -------------------- Logs --------------------
 
-@router.post("/clear_all_data", response_model=Dict[str, str])
-async def clear_all_data_route():
-    engine.clear_all_data()
-    return {"message": "Todos os dados foram limpos com sucesso."}
+@router.get("/logs", response_model=List[Log])
+def get_logs(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.list_logs()
 
+@router.post("/logs", response_model=Log, status_code=status.HTTP_201_CREATED)
+def post_log(payload: Log, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.add_log(payload.model_dump())
+
+@router.delete("/logs")
+def clear_logs(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    core.clear_logs()
+    return {"message": "All logs cleared successfully"}
+
+# -------------------- Settings --------------------
+
+@router.get("/settings", response_model=Settings)
+def get_settings(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.get_settings()
+
+@router.put("/settings", response_model=Settings)
+def put_settings(payload: Settings, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.update_settings(payload.model_dump(exclude_unset=True))
+
+# -------------------- Recorrentes --------------------
+
+@router.get("/recurring_charges", response_model=List[RecurringCharge])
+def get_recurrents(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.list_recurrents()
+
+@router.post("/recurring_charges", response_model=RecurringCharge, status_code=status.HTTP_201_CREATED)
+def post_recurrent(payload: RecurringCharge, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    return core.add_recurrent(payload.model_dump())
+
+@router.put("/recurring_charges/{rc_id}", response_model=RecurringCharge)
+def put_recurrent(rc_id: str, payload: RecurringCharge, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    out = core.update_recurrent(rc_id, payload.model_dump(exclude_unset=True))
+    if not out:
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return {"id": rc_id, "status": "NOT_FOUND"}
+    return out
+
+@router.delete("/recurring_charges/{rc_id}")
+def delete_recurrent(rc_id: str, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    ok = core.delete_recurrent(rc_id)
+    return {"deleted": ok}
+
+@router.delete("/recurring_charges")
+def clear_recurrents(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    core.clear_recurrents()
+    return {"message": "All recurring charges cleared successfully"}
+
+@router.post("/process_recurring_charges")
+def process_recurrents(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    count = core.process_recurrents()
+    return {"message": f"Processamento concluído. {count} cobranças recorrentes processadas."}
+
+# -------------------- Sincronização e Envio --------------------
+
+@router.post("/sync_charges_with_clients", response_model=SyncResult)
+def sync_with_clients(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    updated = core.sync_charges_with_clients()
+    return {"message": f"Sincronização concluída. {updated} cobranças atualizadas."}
+
+@router.post("/send_whatsapp")
+def send_whatsapp(payload: dict, response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    phone = payload.get("phoneNumber")
+    message = payload.get("messageContent", "")
+    if not core.is_valid_phone_number(phone):
+        response.status_code = 400
+        return {"status": "Erro", "error": "Número de telefone inválido."}
+    return core.send_whatsapp_message(phone, message)
+
+@router.post("/clear_all_data")
+def clear_all(response: Response, trace_id: str = Depends(with_trace)):
+    response.headers["X-Trace-Id"] = trace_id
+    core.clear_all_data()
+    return {"message": "All data cleared and settings reset successfully"}
