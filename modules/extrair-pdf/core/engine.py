@@ -1,3 +1,4 @@
+
 # modules/extrair-pdf/core/engine.py
 import io
 import re
@@ -93,7 +94,6 @@ def clean_condominio_name(name: str) -> str:
     name = re.sub(r'Folha Mensal$', '', name, flags=re.IGNORECASE).strip()
     name = re.sub(r'CONDOMINIO\s+EDIFICIO\s+', 'CONDOMINIO ', name, flags=re.IGNORECASE).strip()
     name = re.sub(r'\s+', ' ', name).strip()
-    # Mantém espaços; só remove acentos e padroniza maiúsculas
     return unidecode(name).upper()
 
 # ----------------------
@@ -142,7 +142,7 @@ def process_pdf_file(pdf_bytes: bytes):
                 competencia_grupo = data.get('competencia', "DataDesconhecida")
 
                 if competencia_grupo != "DataDesconhecida":
-                    pdf_filename = f"Recibo de Pagamento {competencia_grupo} - {condominio_nome}.pdf")
+                    pdf_filename = f"Recibo de Pagamento {competencia_grupo} - {condominio_nome}.pdf"
                 else:
                     pdf_filename = f"Recibo de Pagamento - {condominio_nome} - {datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
@@ -150,7 +150,6 @@ def process_pdf_file(pdf_bytes: bytes):
                 writer.write(grouped_pdf_buffer)
                 grouped_pdf_buffer.seek(0)
 
-                # IMPORTANTE: não usar secure_filename — manter espaços e acentos
                 zf.writestr(pdf_filename, grouped_pdf_buffer.getvalue())
 
         if competencia_geral != "DataDesconhecida":
