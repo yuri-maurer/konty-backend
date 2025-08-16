@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 # Importa os roteadores das funcionalidades
 from routes import painel, sistemas
 from auth import router as auth_router
-from routes import pdf_processor # 1. IMPORTA A NOSSA NOVA ROTA DE PDF
+from routes import pdf_processor
+from routes import cobranca  # <-- 1. ADICIONADO: Importa o novo roteador de cobrança
 
 # Carrega as variáveis de ambiente
 load_dotenv()
@@ -98,8 +99,8 @@ async def security_headers(request: Request, call_next):
 app.include_router(auth_router, prefix="/auth", tags=["Autenticação"])
 app.include_router(painel.router, prefix="/painel", tags=["Painel"])
 app.include_router(sistemas.router, prefix="/sistemas", tags=["Sistemas"])
-# 2. REGISTA A NOSSA NOVA ROTA DE PDF
 app.include_router(pdf_processor.router, prefix="/modulos", tags=["Módulos"])
+app.include_router(cobranca.router) # <-- 2. ADICIONADO: Registra as novas rotas de cobrança
 
 @app.get("/")
 async def read_root():
